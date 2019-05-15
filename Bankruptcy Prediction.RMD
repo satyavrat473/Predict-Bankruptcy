@@ -1,0 +1,358 @@
+---
+title: "Bankruptcy Prediction Using Machine Learning"
+author: "Satya Vrat Singh"
+date: "9 February 2019"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+```
+#Abstract  
+The biggest calamity that can befall equity investors is corporate bankruptcy, which wipes out the equity of a firm and knocks the stock's investment value down to zero. Fundamental analysis attempts to gauge the financial strength of a company using a variety of metrics. Used in conjunction with one another, financial ratios can often help us to paint a picture of the long-term viability of a firm.    
+
+* Clear the environment
+
+```{r}
+rm(list=ls(all=TRUE))
+```
+
+```{r library, include=FALSE}
+# Load libraries
+#install.packages("caret") #for createDataPartition 
+#install.packages("DMwR") #for smote
+#install.packages("C50")
+#install.packages("e1071")
+#install.packages("rpart")
+#install.packages("rpart.plot")
+#install.packages("doParallel")
+library(caret)
+library(DMwR)
+library(C50)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(glmnet)
+#library(missForest)
+#library(doParallel)
+#registerDoParallel(cores=8)
+```
+```{r include=FALSE}
+# FUNCTIONS Definition
+knnimputation = function(data){
+  imputedData = knnImputation(data = data, k = ceiling(sqrt(nrow(data))))
+  sum(is.na(imputedData))
+  return(imputedData)
+}
+
+CalScores_class = function(model,data){
+  Prediction = data$target
+  Reference = predict(model,newdata=data, type="class")
+  
+  conf_matrix = table(Prediction,Reference)
+  print(conf_matrix)
+  recall = conf_matrix[1, 1]/sum(conf_matrix[,1])
+  precision = conf_matrix[1, 1]/sum(conf_matrix[1,])
+  specificity = conf_matrix[2, 2]/sum(conf_matrix[,2])
+  accuracy = sum(diag(conf_matrix))/sum(conf_matrix)
+  F1 = (2 * precision * recall) / (precision + recall)
+  
+  cat('\nRecall      : ',+recall)
+  cat('\nPrecision   : ',+precision)
+  cat('\nSpecificity : ',+specificity)
+  cat('\nAccuracy    : ',+accuracy)
+  cat('\nF1 Score    : ',+F1)
+}
+
+CalScores_response = function(model,data){
+  Prediction <- data$target
+  Reference = predict(model,newdata=data, type="response")
+  conf_matrix <- t(table(Prediction,Reference))
+  print(conf_matrix)
+  recall = conf_matrix[1, 1]/sum(conf_matrix[,1])
+  precision = conf_matrix[1, 1]/sum(conf_matrix[1,])
+  specificity = conf_matrix[2, 2]/sum(conf_matrix[,2])
+  accuracy = sum(diag(conf_matrix))/sum(conf_matrix)
+  F1 = (2 * precision * recall) / (precision + recall)
+  
+  cat('\nRecall      : ',+recall)
+  cat('\nPrecision   : ',+precision)
+  cat('\nSpecificity : ',+specificity)
+  cat('\nAccuracy    : ',+accuracy)
+  cat('\nF1 Score    : ',+F1)
+}
+```
+```{r include=FALSE}
+# getwd()
+setwd("D:\\D\\INSOFE\\Week12 (09-10.02.2019) - CUTe3\\09.02.19(CUTe3)\\SatyaCUTe3")
+```
+#Agenda  
+* Get the data  
+* Data Pre-processing  
+* Build models  
+* Predictions  
+* Analysis  
+
+#Understanding the Data  
+
+* The given data contains details of various markers and financial ratios of entities.  
+Target variable is whether the company got bankrupt in the subsequent years or
+not.  
+* 1 - bankrupt, 0 - not bankrup  
+* Make sure the dataset is located in your current working directory
+
+```{r}
+bank_data = read.csv("train.csv",header = T, 
+                     na.strings = c("?","#",""," ","NA"))
+```
+* Use the str(), summary() functions to get a feel for the dataset.
+```{r}
+str(bank_data)
+```
+* The dataset has 31587 observations of 18 variables.  
+```{r}
+summary(bank_data)
+```
+#Exploratory Data Analysis  
+```{r}
+table(bank_data$target)
+```
+![](img/distribution.jpg)  
+
+Have to do to stratified random sampling and SMOTE during/after split as the target variable is categirical and has class imbalance 
+
+#User-defined Functions  
+* knnimputation(data)
+* CalScores_class(model,data)
+* CalScores_response(model,data)  
+
+#Data Pre-processing
+* Checking the number of missing values per column in the data frame
+```{r}
+colSums(is.na(bank_data))
+```
+* Drop the index column  
+```{r}
+bank_data$target = as.factor(bank_data$target)
+rownames(bank_data) <- bank_data$ID
+bank_data$ID = NULL
+```
+* Train/Test Split  
+```{r}
+set.seed(4470)
+train_rows = createDataPartition(bank_data$target, p = 0.7, list = F)
+train_data = bank_data[train_rows,] #training data
+test_data = bank_data[-train_rows,] #test data
+dim(bank_data)
+dim(train_data)
+dim(test_data)
+table(train_data$target)
+table(test_data$target)
+```
+* Imputation  
+```{r Imputation}
+train_data = knnimputation(train_data)
+test_data = knnimputation(test_data)
+sum(is.na(train_data))
+sum(is.na(test_data))
+```
+* Applying SMOTE to make class balanced  
+```{r Smoting}
+set.seed(2232)
+trainsmote = SMOTE(target~.,data=train_data,perc.over = 800,perc.under = 200 )
+prop.table(table(trainsmote$target))
+
+#set.seed(2232)
+#testsmote = SMOTE(target~.,data=test_data,perc.over = 800,perc.under = 200 )
+```
+#C50 Model  
+* Build model on smoteddata trainsmote  
+```{r C50}
+DT_C50 <- C5.0(target~.,data=trainsmote)
+plot(DT_C50)
+```
+* Check variable importance  
+```{r}
+C5imp(DT_C50, pct=TRUE)
+```
+* Perforance metric  
+```{r C50Perform}
+CalScores_class(DT_C50,trainsmote)
+#CalScores_class(DT_C50,testsmote)
+CalScores_class(DT_C50,test_data)
+
+```
+#RPART Model  
+```{r rpart}
+DT_rpart <- train(target ~., data = trainsmote, method = "rpart",
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10 #tuneLength, to specify the number of possible cp values to evaluate. Default value is 3, here we'll use 10.
+)
+
+plot(DT_rpart) #cp 0.00405077
+```
+
+```{r}
+DT_rpart$bestTune
+```
+* Perforance metric  
+
+```{r rpartPerform}
+CalScores_class(DT_rpart$finalModel,trainsmote)
+#CalScores_class(DT_rpart$finalModel,testsmote)
+CalScores_class(DT_rpart$finalModel,test_data)
+
+```
+
+#Random Forest  
+
+```{r RF}
+set.seed(123)
+DT_RF = randomForest(target ~ ., 
+                     data=trainsmote, 
+                     keep.forest=TRUE, 
+                     ntree=200,
+                     set.seed(123)
+) 
+DT_RF$importance
+rf_Imp_Attr = data.frame(DT_RF$importance)
+rf_Imp_Attr = data.frame(Attributes = row.names(rf_Imp_Attr), Importance = rf_Imp_Attr[,1])
+rf_Imp_Attr = rf_Imp_Attr[order(rf_Imp_Attr$Importance, decreasing = TRUE),]
+rf_Imp_Attr
+varImpPlot(DT_RF)
+```
+
+* Perforance metric  
+
+```{r RFperform}
+CalScores_response(DT_RF,testsmote)
+```
+
+### RF Important Attr
+```{r}
+top_Imp_Attr = as.character(rf_Imp_Attr$Attributes[1:35])
+DT_RF_Imp = randomForest(target~.,
+                         data=trainsmote[,c(top_Imp_Attr,"target")], 
+                         keep.forest=TRUE,
+                         ntree=100, set.seed(015)
+) 
+CalScores_response(DT_RF_Imp,testsmote)
+```
+
+* Fine tuning parameters of Random Forest model  
+* Using For loop to identify the right mtry for model  
+```{r rfMtry}
+#a=c()
+#i=11
+#for (i in 10:20) {
+#  model3 <- randomForest(target ~ ., data = trainsmote, ntree = 500, mtry = i, importance = TRUE)
+#  predValid <- predict(model3, testsmote, type = "class")
+#  a[i-2] = mean(predValid == testsmote$target)
+#}
+#a
+#plot(10:20,a)
+```
+* Random Forest with mtry=19  
+```{r rfmtry19}
+RF_tune  <- randomForest(target~., data = trainsmote, ntree = 500, mtry = 19, importance = TRUE, set.seed(2345))
+CalScores_response(RF_tune,testsmote)
+```
+
+* Random Forest Feature selection  
+```{r}
+RF_tune$importance
+rf_Imp_Attr = data.frame(RF_tune$importance)
+rf_Imp_Attr = data.frame(Attributes = row.names(rf_Imp_Attr), Importance = rf_Imp_Attr[,1])
+rf_Imp_Attr = rf_Imp_Attr[order(rf_Imp_Attr$Importance, decreasing = TRUE),]
+rf_Imp_Attr
+varImpPlot(RF_tune)
+
+top_Imp_Attr = as.character(rf_Imp_Attr$Attributes[1:40])
+DT_RF_Imp = randomForest(target~.,
+                         data=trainsmote[,c(top_Imp_Attr,"target")], 
+                         keep.forest=TRUE,
+                         ntree=500,mtry=19, set.seed(1115)
+) 
+CalScores_response(DT_RF_Imp,testsmote)
+```
+
+* Random Forest Feature Engineering  
+```{r}
+Feature_Zscore = function(data){
+  train_featureEngg = data
+  train_featureEngg$Z_Score = NA
+  
+  train_featureEngg$Z_Score = 1.2*train_featureEngg$Attr3 + 
+    1.4*train_featureEngg$Attr6 + 3.3*train_featureEngg$Attr7 + 
+    0.6*train_featureEngg$Attr8 + 1.0*train_featureEngg$Attr9
+  
+  #sum(is.na(train_featureEngg))
+  #summary(train_featureEngg)
+  std_obj = preProcess(train_featureEngg[, !colnames(train_featureEngg) %in% ("target")],  
+                       method = c("center", "scale"))
+  std_data = predict(std_obj, train_featureEngg)
+  #subset(std_data[,c("Attr3","Attr6","Attr7","Attr8","Z_Score")], rownames(std_data)==10049)
+  
+  std_data$Z_Score <- ifelse( std_data$Z_Score>2.6, "safe", 
+                              ifelse(std_data$Z_Score<=2.6 & 
+                                       std_data$Z_Score>=1.1, "grey_area",
+                                     "distress_zone"))
+  std_data$Z_Score <- as.factor(std_data$Z_Score)
+  return(std_data)
+  #table(std_data$Z_Score)
+}
+#subset(std_data[,c("Attr3","Attr6","Attr7","Attr8","target","Z_Score")], std_data$target ==0 & std_data$Z_Score == "headed_for_bankruptcy")
+```
+
+```{r}
+train_data_fet = Feature_Zscore(trainsmote)
+test_data_fet = Feature_Zscore(testsmote)
+
+RF_tune_featureng  <- randomForest(target~., data = train_data_fet, ntree = 500, mtry = 19, importance = TRUE, set.seed(2345))
+CalScores_response(RF_tune_featureng,test_data_fet)
+```
+
+#SVM Linear  
+```{r}
+SVM_linear <- svm(target ~ . , trainsmote, 
+                 kernel = "linear", 
+                 probability = TRUE
+)
+CalScores_response(SVM_linear,testsmote)
+```
+
+#Prediction
+```{r}
+bank_testdata = read.csv("test.csv",header = T)
+rownames(bank_testdata) <- bank_testdata$ID
+#Drop the index column
+bank_testdata$ID = NULL
+sum(is.na(bank_testdata))
+bank_testdata = knnimputation(bank_testdata)
+
+ApproxPredict = predict(RF_tune,newdata=bank_testdata, type="class") #0.43
+write.csv(x = ApproxPredict, file = "RF_tune_submission1.csv",row.names = T)
+
+test_data_fet = Feature_Zscore(bank_testdata)
+ApproxPredict = predict(RF_tune_featureng,newdata=test_data_fet, type="class") #0.11
+write.csv(x = ApproxPredict, file = "RF_tune_featureng_submission2.csv",row.names = T)
+
+
+ApproxPredict = predict(DT_RF_Imp,newdata=bank_testdata, type="class") #0.30
+write.csv(x = ApproxPredict, file = "DT_RF_Imp_submission3.csv",row.names = T)
+
+ApproxPredict = predict(DT_RF_Imp,newdata=bank_testdata, type="class") #0.44
+write.csv(x = ApproxPredict, file = "DT_RF_Imp_submission4.csv",row.names = T)
+tail(ApproxPredict)
+```
+
+
+
